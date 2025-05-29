@@ -55,27 +55,51 @@ class DosDetectorGUI:
         main_frame = ttk.Frame(self.scrollable_frame, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # file selection
-        ttk.Label(main_frame, text="Select Wireshark CSV Export:").grid(row=0, column=0, sticky=tk.W)
+        # file selection frame
+        file_frame = ttk.LabelFrame(main_frame, text="File Selection", padding="5")
+        file_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        # input file selection
+        ttk.Label(file_frame, text="Input CSV:").grid(row=0, column=0, sticky=tk.W)
         self.file_path = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.file_path, width=60).grid(row=0, column=1, padx=5)
-        ttk.Button(main_frame, text="Browse", command=self.browse_file).grid(row=0, column=2)
+        ttk.Entry(file_frame, textvariable=self.file_path, width=60).grid(row=0, column=1, padx=5)
+        ttk.Button(file_frame, text="Browse", command=self.browse_file).grid(row=0, column=2)
+        
+        # output directory selection
+        ttk.Label(file_frame, text="Output Directory:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.output_path = tk.StringVar(value="output")
+        ttk.Entry(file_frame, textvariable=self.output_path, width=60).grid(row=1, column=1, padx=5, pady=5)
+        ttk.Button(file_frame, text="Browse", command=self.browse_output_dir).grid(row=1, column=2, pady=5)
+        
+        # training configuration frame
+        train_frame = ttk.LabelFrame(main_frame, text="Training Configuration", padding="5")
+        train_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        
+        # epoch configuration
+        ttk.Label(train_frame, text="Number of Epochs:").grid(row=0, column=0, sticky=tk.W)
+        self.epochs = tk.StringVar(value="30")
+        ttk.Entry(train_frame, textvariable=self.epochs, width=10).grid(row=0, column=1, padx=5)
+        
+        # epoch update frequency
+        ttk.Label(train_frame, text="Update Every N Epochs:").grid(row=0, column=2, sticky=tk.W, padx=(20,0))
+        self.update_frequency = tk.StringVar(value="5")
+        ttk.Entry(train_frame, textvariable=self.update_frequency, width=10).grid(row=0, column=3, padx=5)
         
         # progress bar
         self.progress = ttk.Progressbar(main_frame, length=400, mode='determinate')
-        self.progress.grid(row=1, column=0, columnspan=3, pady=10)
+        self.progress.grid(row=2, column=0, columnspan=3, pady=10)
         
         # status label
         self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(main_frame, textvariable=self.status_var).grid(row=2, column=0, columnspan=3)
+        ttk.Label(main_frame, textvariable=self.status_var).grid(row=3, column=0, columnspan=3)
         
         # analysis button
         self.analyze_btn = ttk.Button(main_frame, text="Start Analysis", command=self.start_analysis)
-        self.analyze_btn.grid(row=3, column=0, columnspan=3, pady=10)
+        self.analyze_btn.grid(row=4, column=0, columnspan=3, pady=10)
         
         # console frame with scrollbar
         console_frame = ttk.Frame(main_frame)
-        console_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
+        console_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # console label
         ttk.Label(console_frame, text="Console Output:").pack(anchor=tk.W)
@@ -90,11 +114,11 @@ class DosDetectorGUI:
         
         # plot display area
         self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=5, column=0, columnspan=3, pady=10, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.notebook.grid(row=6, column=0, columnspan=3, pady=10, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # makes the notebook expandable
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(5, weight=1)
+        main_frame.rowconfigure(6, weight=1)
         
         # configures the logging to the console
         self.setup_logging()
@@ -125,15 +149,49 @@ class DosDetectorGUI:
         if filename:
             self.file_path.set(filename)
     
+    def browse_output_dir(self):
+        """Browse for output directory."""
+        directory = filedialog.askdirectory(
+            title="Select Output Directory",
+            initialdir=os.getcwd()
+        )
+        if directory:
+            self.output_path.set(directory)
+    
     def start_analysis(self):
         if not self.file_path.get():
             messagebox.showerror("Error", "Please select a CSV file first")
+            return
+        
+        # validates epoch inputs
+        try:
+            epochs = int(self.epochs.get())
+            update_freq = int(self.update_frequency.get())
+            if epochs < 1 or update_freq < 1 or update_freq > epochs:
+                raise ValueError("Invalid epoch configuration")
+        except ValueError as e:
+            messagebox.showerror("Error", "Please enter valid numbers for epochs and update frequency")
+            return
+        
+        # creates output directory if it doesn't exist
+        output_dir = self.output_path.get()
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
             return
         
         # disables the button during analysis
         self.analyze_btn.state(['disabled'])
         self.status_var.set("Analysis in progress...")
         self.progress['value'] = 0
+        
+        # initializes the detector with the output directory and training parameters
+        self.detector = DosAIDetector(output_dir=output_dir)
+        self.detector.training_config = {
+            'epochs': epochs,
+            'update_frequency': update_freq
+        }
         
         # starts the analysis in a separate thread
         thread = threading.Thread(target=self.run_analysis)
@@ -216,6 +274,25 @@ class DosDetectorGUI:
             canvas_frame = ttk.Frame(frame)
             canvas_frame.pack(fill=tk.BOTH, expand=True)
             
+            # if this is the anomaly plot, enhance it
+            if 'anomaly' in name.lower():
+                # adjusts figure size for better visibility
+                fig.set_size_inches(12, 6)
+                
+                # gets the axes and adjusts the scatter plot
+                ax = fig.gca()
+                
+                # increases marker size and adds alpha for better visibility
+                for collection in ax.collections:
+                    collection.set_sizes([50])  # larger markers
+                    collection.set_alpha(0.6)   # semi-transparent
+                
+                # adds grid for better readability
+                ax.grid(True, linestyle='--', alpha=0.7)
+                
+                # enhances legend
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            
             canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
             canvas.draw()
             canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -225,12 +302,46 @@ class DosDetectorGUI:
             toolbar = NavigationToolbar2Tk(canvas, canvas_frame)
             toolbar.update()
             toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # adds the metrics tab
+        self.add_metrics_tab()
+    
+    def add_metrics_tab(self):
+        """Add a tab displaying detailed metrics."""
+        metrics_frame = ttk.Frame(self.notebook)
+        self.notebook.add(metrics_frame, text="Detailed Metrics")
+        
+        # creates a text widget for metrics
+        metrics_text = tk.Text(metrics_frame, wrap=tk.WORD, padx=10, pady=10)
+        metrics_text.pack(fill=tk.BOTH, expand=True)
+        
+        # formats and displays the metrics
+        metrics_text.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
+        metrics_text.tag_configure("value", font=("TkDefaultFont", 10))
+        
+        metrics = self.detector.metrics
+        
+        # adds model performance section
+        metrics_text.insert(tk.END, "Model Performance Metrics\n", "heading")
+        metrics_text.insert(tk.END, "\nIsolation Forest:\n", "heading")
+        metrics_text.insert(tk.END, f"MSE: {metrics['isolation_forest_mse']:.4f}\n", "value")
+        metrics_text.insert(tk.END, f"Accuracy: {metrics['isolation_forest_accuracy']:.2f}%\n", "value")
+        
+        metrics_text.insert(tk.END, "\nAutoencoder:\n", "heading")
+        metrics_text.insert(tk.END, f"MSE: {metrics['autoencoder_mse']:.4f}\n", "value")
+        metrics_text.insert(tk.END, f"Accuracy: {metrics['autoencoder_accuracy']:.2f}%\n", "value")
+        
+        metrics_text.insert(tk.END, "\nCombined Model:\n", "heading")
+        metrics_text.insert(tk.END, f"Accuracy: {metrics['combined_accuracy']:.2f}%\n", "value")
+        
+        # makes the text widget read-only
+        metrics_text.configure(state='disabled')
     
     def display_summary(self, summary):
         # creates the summary window
         window = tk.Toplevel(self.root)
         window.title("Analysis Summary")
-        window.geometry("400x300")
+        window.geometry("600x400")
         
         # adds the summary text
         text = tk.Text(window, wrap=tk.WORD, padx=10, pady=10)
@@ -238,15 +349,69 @@ class DosDetectorGUI:
         
         # formats and inserts the summary
         text.insert(tk.END, "=== DoS Attack Analysis Summary ===\n\n")
-        for key, value in summary.items():
-            if key == 'protocols':
-                text.insert(tk.END, f"\nProtocol Distribution:\n")
-                for protocol, count in value.items():
-                    text.insert(tk.END, f"  {protocol}: {count}\n")
-            else:
-                text.insert(tk.END, f"{key.replace('_', ' ').title()}: {value}\n")
+        
+        # basic statistics
+        text.insert(tk.END, "Basic Statistics:\n")
+        text.insert(tk.END, f"Total Packets: {summary['total_packets']}\n")
+        text.insert(tk.END, f"Anomalies Detected: {summary['anomalies_detected']}\n")
+        text.insert(tk.END, f"Anomaly Percentage: {summary['anomaly_percentage']}\n\n")
+        
+        # model metrics
+        text.insert(tk.END, "Model Performance Metrics:\n")
+        metrics = summary['model_metrics']
+        text.insert(tk.END, f"Isolation Forest MSE: {metrics['isolation_forest_mse']}\n")
+        text.insert(tk.END, f"Autoencoder MSE: {metrics['autoencoder_mse']}\n")
+        text.insert(tk.END, f"Isolation Forest Accuracy: {metrics['isolation_forest_accuracy']}\n")
+        text.insert(tk.END, f"Autoencoder Accuracy: {metrics['autoencoder_accuracy']}\n")
+        text.insert(tk.END, f"Combined Model Accuracy: {metrics['combined_accuracy']}\n\n")
+        
+        # protocol distribution
+        text.insert(tk.END, f"\nProtocol Distribution:\n")
+        for protocol, count in summary['protocols'].items():
+            text.insert(tk.END, f"  {protocol}: {count}\n")
         
         text.configure(state='disabled')
+        
+        # adds save button
+        save_frame = ttk.Frame(window)
+        save_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Button(save_frame, text="Save Summary", command=lambda: self.save_summary(summary)).pack(side=tk.RIGHT)
+    
+    def save_summary(self, summary):
+        """Save the analysis summary to a file."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            title="Save Analysis Summary"
+        )
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    f.write("=== DoS Attack Analysis Summary ===\n\n")
+                    
+                    # writes basic statistics
+                    f.write("Basic Statistics:\n")
+                    f.write(f"Total Packets: {summary['total_packets']}\n")
+                    f.write(f"Anomalies Detected: {summary['anomalies_detected']}\n")
+                    f.write(f"Anomaly Percentage: {summary['anomaly_percentage']}\n\n")
+                    
+                    # writes model metrics
+                    f.write("Model Performance Metrics:\n")
+                    metrics = summary['model_metrics']
+                    f.write(f"Isolation Forest MSE: {metrics['isolation_forest_mse']}\n")
+                    f.write(f"Autoencoder MSE: {metrics['autoencoder_mse']}\n")
+                    f.write(f"Isolation Forest Accuracy: {metrics['isolation_forest_accuracy']}\n")
+                    f.write(f"Autoencoder Accuracy: {metrics['autoencoder_accuracy']}\n")
+                    f.write(f"Combined Model Accuracy: {metrics['combined_accuracy']}\n\n")
+                    
+                    # writes protocol distribution
+                    f.write("Protocol Distribution:\n")
+                    for protocol, count in summary['protocols'].items():
+                        f.write(f"  {protocol}: {count}\n")
+                
+                messagebox.showinfo("Success", "Summary saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save summary: {str(e)}")
 
 def main():
     root = tk.Tk()
