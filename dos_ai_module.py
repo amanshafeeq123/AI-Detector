@@ -75,9 +75,11 @@ class DosAIDetector:
             # creates a copy to avoid modifying the original
             processed_df = df.copy()
             
-            # converts the time to seconds from start
+            # converts the time to seconds from start, ensuring positive values
             processed_df['timestamp'] = pd.to_numeric(processed_df['Time'], errors='coerce')
-            processed_df['timestamp'] = processed_df['timestamp'] - processed_df['timestamp'].min()
+            min_time = processed_df['timestamp'].min()
+            processed_df['timestamp'] = processed_df['timestamp'] - min_time
+            processed_df = processed_df.sort_values('timestamp')  # Sort by time to ensure chronological order
             
             # handles the categorical variables with consistent column names
             categorical_columns = {
@@ -283,14 +285,35 @@ class DosAIDetector:
             
             # 1. packet length/count over time
             fig, ax = plt.subplots(figsize=(12, 6))
-            ax.plot(df['timestamp'], df['Length'], label='Packet Length', alpha=0.6)
+            
+            # Unscale the Length values back to original scale for better readability
+            original_length = self.scalers['numeric'].inverse_transform(df[['Length', 'timestamp']])[:, 0]
+            original_time = df['timestamp'] - df['timestamp'].min()  # Keep time relative but starting from 0
+            
+            ax.plot(original_time, original_length, label='Packet Length', alpha=0.6)
+            
+            # Handle anomalies with original scale values
             anomalies = df[df['is_anomaly']]
-            ax.scatter(anomalies['timestamp'], anomalies['Length'],
+            anomaly_length = self.scalers['numeric'].inverse_transform(anomalies[['Length', 'timestamp']])[:, 0]
+            anomaly_time = anomalies['timestamp'] - df['timestamp'].min()
+            
+            ax.scatter(anomaly_time, anomaly_length,
                       color='red', label='Anomalies', alpha=0.5)
+            
+            # Improve axis formatting
             ax.set_title('Packet Length Over Time with Anomalies')
             ax.set_xlabel('Time (s)')
-            ax.set_ylabel('Packet Length')
-            ax.legend()
+            ax.set_ylabel('Packet Length (bytes)')
+            
+            # Format y-axis with thousands separator
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ',')))
+            
+            # Add grid for better readability
+            ax.grid(True, linestyle='--', alpha=0.7)
+            
+            # Adjust legend
+            ax.legend(loc='upper right')
+            
             plots['timeline'] = fig
             
             # 2. top source ips during anomalies
