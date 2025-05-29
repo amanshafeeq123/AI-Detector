@@ -41,6 +41,12 @@ class DosAIDetector:
         # will initialize when needed
         self.autoencoder = None
         
+        # default training configuration
+        self.training_config = {
+            'epochs': 30,
+            'update_frequency': 5
+        }
+        
     def load_csv(self, file_path):
         """Load and validate CSV file."""
         try:
@@ -192,9 +198,14 @@ class DosAIDetector:
                 self.autoencoder = self.create_autoencoder(X.shape[1])
             
             class TrainingCallback(keras.callbacks.Callback):
+                def __init__(self, update_frequency, total_epochs):
+                    super().__init__()
+                    self.update_frequency = update_frequency
+                    self.total_epochs = total_epochs
+                
                 def on_epoch_end(self, epoch, logs=None):
-                    if (epoch + 1) % 5 == 0:  # logs every 5 epochs (idk maybe  i should change this? let's see with more testing later)
-                        logging.info(f"Autoencoder training epoch {epoch + 1}/30, loss: {logs['loss']:.4f}")
+                    if (epoch + 1) % self.update_frequency == 0:
+                        logging.info(f"Autoencoder training epoch {epoch + 1}/{self.total_epochs}, loss: {logs['loss']:.4f}")
             
             # determines the batch size based on the dataset size
             batch_size = min(32, max(16, n_samples // 1000))
@@ -202,11 +213,12 @@ class DosAIDetector:
             
             history = self.autoencoder.fit(
                 X, X,
-                epochs=30,
+                epochs=self.training_config['epochs'],
                 batch_size=batch_size,
                 validation_split=0.1,
                 verbose=0,
-                callbacks=[TrainingCallback()]
+                callbacks=[TrainingCallback(self.training_config['update_frequency'], 
+                                         self.training_config['epochs'])]
             )
             
             logging.info("Autoencoder training completed")
@@ -235,6 +247,23 @@ class DosAIDetector:
             df['is_anomaly_if'] = if_predictions == -1
             df['is_anomaly_ae'] = ae_predictions == 1
             df['is_anomaly'] = df['is_anomaly_if'] | df['is_anomaly_ae']
+            
+            # calculates accuracy metrics
+            self.metrics = {
+                'isolation_forest_mse': np.mean(np.power(if_scores - np.mean(if_scores), 2)),
+                'autoencoder_mse': np.mean(mse),
+                'isolation_forest_accuracy': np.mean(if_predictions == -1) * 100,
+                'autoencoder_accuracy': np.mean(ae_predictions) * 100,
+                'combined_accuracy': np.mean(df['is_anomaly']) * 100
+            }
+            
+            # logs the metrics
+            logging.info("\nModel Performance Metrics:")
+            logging.info(f"Isolation Forest MSE: {self.metrics['isolation_forest_mse']:.4f}")
+            logging.info(f"Autoencoder MSE: {self.metrics['autoencoder_mse']:.4f}")
+            logging.info(f"Isolation Forest Accuracy: {self.metrics['isolation_forest_accuracy']:.2f}%")
+            logging.info(f"Autoencoder Accuracy: {self.metrics['autoencoder_accuracy']:.2f}%")
+            logging.info(f"Combined Model Accuracy: {self.metrics['combined_accuracy']:.2f}%")
             
             # logs the summary statistics
             n_anomalies = df['is_anomaly'].sum()
@@ -310,7 +339,7 @@ class DosAIDetector:
             
             # saves the Autoencoder
             if self.autoencoder:
-                self.autoencoder.save(os.path.join(self.output_dir, 'autoencoder'))
+                self.autoencoder.save(os.path.join(self.output_dir, 'autoencoder.keras'))
             
             # saves the encoders and scalers
             joblib.dump(self.encoders,
@@ -325,24 +354,31 @@ class DosAIDetector:
             raise
     
     def summarize_results(self, df):
-        """Generate summary statistics of the analysis."""
+        """Generate a summary of the analysis results."""
         try:
+            # calculates basic statistics
+            total_packets = len(df)
+            anomalies = df['is_anomaly'].sum()
+            anomaly_percentage = (anomalies / total_packets) * 100
+            
+            # gets protocol distribution
+            protocol_dist = df['Protocol'].value_counts().to_dict()
+            
+            # creates the summary dictionary
             summary = {
-                'total_packets': len(df),
-                'total_anomalies': df['is_anomaly'].sum(),
-                'anomaly_percentage': (df['is_anomaly'].sum() / len(df)) * 100,
-                'unique_sources': df['Source'].nunique(),
-                'unique_destinations': df['Destination'].nunique(),
-                'protocols': df['Protocol'].value_counts().to_dict(),
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'total_packets': total_packets,
+                'anomalies_detected': int(anomalies),
+                'anomaly_percentage': f"{anomaly_percentage:.2f}%",
+                'protocols': protocol_dist,
+                'model_metrics': {
+                    'isolation_forest_mse': f"{self.metrics['isolation_forest_mse']:.4f}",
+                    'autoencoder_mse': f"{self.metrics['autoencoder_mse']:.4f}",
+                    'isolation_forest_accuracy': f"{self.metrics['isolation_forest_accuracy']:.2f}%",
+                    'autoencoder_accuracy': f"{self.metrics['autoencoder_accuracy']:.2f}%",
+                    'combined_accuracy': f"{self.metrics['combined_accuracy']:.2f}%"
+                }
             }
             
-            # saves the summary to a file
-            with open(os.path.join(self.output_dir, 'analysis_summary.txt'), 'w') as f:
-                for key, value in summary.items():
-                    f.write(f"{key}: {value}\n")
-            
-            logging.info("Analysis summary generated successfully")
             return summary
             
         except Exception as e:
